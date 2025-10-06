@@ -39,7 +39,7 @@ class Kernel extends HttpKernel
         ],
 
         'api' => [
-            'throttle:api',
+            // 'throttle:api', // Temporarily disabled for testing
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
     ];
@@ -61,5 +61,6 @@ class Kernel extends HttpKernel
         'signed' => \Illuminate\Routing\Middleware\ValidateSignature::class,
         'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
+        'resource.monitor' => \App\Http\Middleware\ResourceMonitor::class,
     ];
 }

@@ -35,3 +35,65 @@ Route::post('/test', function () {
 
 // Route::post('/verify-integrity', [PlayIntegrityController::class, 'verifyToken']);
 Route::middleware('auth:sanctum')->post('/refresh-firebase-token', [App\Http\Controllers\Auth\AjaxController::class, 'refreshFirebaseToken']);
+
+// Delivery Charge API Routes
+Route::post('/calculate-delivery-charge', [App\Http\Controllers\ApiController::class, 'calculateDeliveryCharge']);
+Route::get('/delivery-settings', [App\Http\Controllers\ApiController::class, 'getDeliverySettings']);
+Route::post('/update-delivery-settings', [App\Http\Controllers\ApiController::class, 'updateDeliverySettings']);
+
+// Product Stock API Routes
+Route::post('/product-stock-info', [App\Http\Controllers\ApiController::class, 'getProductStockInfo']);
+
+// Search API Routes
+Route::prefix('search')->group(function () {
+    // Category search endpoints
+    Route::get('/categories', [App\Http\Controllers\SearchController::class, 'searchCategories']);
+    Route::get('/categories/published', [App\Http\Controllers\SearchController::class, 'getPublishedCategories']);
+
+    // Mart items search endpoints
+    Route::get('/items', [App\Http\Controllers\SearchController::class, 'searchMartItems']);
+    Route::get('/items/featured', [App\Http\Controllers\SearchController::class, 'getFeaturedMartItems']);
+
+    // Food items search endpoints
+    Route::get('/food', [App\Http\Controllers\FoodSearchController::class, 'searchFoodItems']);
+
+    // Health check endpoint
+    Route::get('/health', [App\Http\Controllers\SearchController::class, 'healthCheck']);
+});
+
+// Mart API Routes
+Route::prefix('mart')->group(function () {
+    // Coupon endpoints
+    Route::get('/coupons', [App\Http\Controllers\MartController::class, 'getMartCoupons']);
+    Route::post('/coupons/apply', [App\Http\Controllers\MartController::class, 'applyMartCoupon']);
+});
+
+// Razorpay API Routes
+Route::prefix('razorpay')->group(function () {
+    // Public routes (no authentication required)
+    Route::get('/settings', [App\Http\Controllers\Api\RazorpayController::class, 'getSettings']);
+
+    // Protected routes (authentication required)
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('/create-order', [App\Http\Controllers\Api\RazorpayController::class, 'createOrder']);
+        Route::post('/verify-payment', [App\Http\Controllers\Api\RazorpayController::class, 'verifyPayment']);
+        Route::post('/payment-details', [App\Http\Controllers\Api\RazorpayController::class, 'getPaymentDetails']);
+        Route::post('/refund-payment', [App\Http\Controllers\Api\RazorpayController::class, 'refundPayment']);
+        Route::post('/order-status', [App\Http\Controllers\Api\RazorpayController::class, 'getOrderStatus']);
+    });
+});
+
+// Catering Service API Routes (Optimized for Performance)
+Route::prefix('catering')->group(function () {
+    // Public routes (optimized with resource monitoring)
+    Route::middleware(['resource.monitor'])->group(function () {
+        Route::post('/requests', [App\Http\Controllers\OptimizedCateringController::class, 'store']);
+        Route::get('/requests/{id}', [App\Http\Controllers\OptimizedCateringController::class, 'show']);
+    });
+    
+    // Admin routes (lightweight authentication with monitoring)
+    Route::middleware(['resource.monitor'])->group(function () {
+        Route::get('/requests', [App\Http\Controllers\OptimizedCateringController::class, 'index']);
+    });
+});
+

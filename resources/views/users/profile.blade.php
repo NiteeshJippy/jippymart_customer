@@ -19,10 +19,19 @@ foreach ($countries as $keycountry => $valuecountry) {
                     <a href="{!! url('profile') !!}" class="">
                         <div class="d-flex align-items-center p-3">
                             <div class="left mr-3 user_image">
+                                @if(isset($user->profilePictureURL) && $user->profilePictureURL)
+                                    <img src="{{ $user->profilePictureURL }}" alt="{{ $user->name }}" class="rounded-circle" style="width: 60px; height: 60px; object-fit: cover;">
+                                @elseif($user->profile_picture)
+                                    <img src="{{ $user->profile_picture }}" alt="{{ $user->name }}" class="rounded-circle" style="width: 60px; height: 60px; object-fit: cover;">
+                                @else
+                                    <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center" style="width: 60px; height: 60px; font-size: 24px; font-weight: bold;">
+                                        {{ strtoupper(substr($user->name, 0, 1)) }}
+                                    </div>
+                                @endif
                             </div>
                             <div class="right">
-                                <h6 class="mb-1 font-weight-bold user_full_name"></h6>
-                                <p class="text-muted m-0 small"><span class="user_email_show"></span></p>
+                                <h6 class="mb-1 font-weight-bold user_full_name">{{ $user->name }}</h6>
+                                <p class="text-muted m-0 small"><span class="user_email_show">{{ $user->email }}</span></p>
                             </div>
                         </div>
                     </a>
@@ -50,21 +59,21 @@ foreach ($countries as $keycountry => $valuecountry) {
                         <div>
                             <div class="form-group">
                                 <label>{{trans('lang.first_name')}}</label>
-                                <input type="text" class="form-control user_first_name" value="">
+                                <input type="text" class="form-control user_first_name" value="{{ $user->firstName ?? '' }}">
                             </div>
                             <div class="form-group">
                                 <label>{{trans('lang.last_name')}}</label>
-                                <input type="text" class="form-control user_last_name">
+                                <input type="text" class="form-control user_last_name" value="{{ $user->lastName ?? '' }}">
                             </div>
                             <div class="form-group">
                                 <label>{{trans('lang.email')}}</label>
-                                <input type="text" class="form-control user_email" disabled>
+                                <input type="text" class="form-control user_email" value="{{ $user->email }}" disabled>
                             </div>
                             <div class="form-group" id="phone-box">
                             <div class="form-group form-material" >
                                             <label class="col-3 control-label">{{trans('lang.user_phone')}}</label>
                                             <div class="col-12">
-                                                <div class="phone-box position-relative" id="phone-box"> 
+                                                <div class="phone-box position-relative" id="phone-box">
                                                     <select name="country" id="country_selector" disabled>
                                                         <?php foreach ($newcountries as $keycy => $valuecy) { ?>
                                                         <?php $selected = ""; ?>
@@ -248,7 +257,7 @@ foreach ($countries as $keycountry => $valuecountry) {
                 firebase.auth().signInWithEmailAndPassword(userEmail, userOldPassword).then((userCredential) => {
                     var user = userCredential.user;
                         user.updatePassword(userNewPassword).then(() => {
-                            showAlertMessage("{{trans('lang.password_updated_successfully')}}", "green", 3);  
+                            showAlertMessage("{{trans('lang.password_updated_successfully')}}", "green", 3);
                             window.scrollTo(0, 0);
                             $("#change_password .close").trigger( "click" );
                             }).catch((error) => {

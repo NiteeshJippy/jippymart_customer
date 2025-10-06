@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-
+// SEO models removed for performance optimization
 class HomeController extends Controller
 {
     /**
@@ -14,7 +14,7 @@ class HomeController extends Controller
      */
     public function __construct()
     {
-        
+
         $route = \Route::currentRouteName();
         if(!isset($_COOKIE['address_name']) && $route != "set-location"){
     		\Redirect::to('set-location')->send();
@@ -28,7 +28,14 @@ class HomeController extends Controller
      */
     public function index()
     {
-        return view('home');
+        // SEO data removed for performance optimization
+        $seoData = [
+            'title' => 'JippyMart - Your One-Stop Destination for Groceries & Daily Essentials',
+            'description' => 'Get fresh groceries, medicines, and daily essentials delivered to your doorstep. Fast delivery, quality products, and great prices at JippyMart.'
+        ];
+
+        // Pass SEO data to your existing home view
+        return view('home', compact('seoData'));
     }
     public function setLocation()
     {

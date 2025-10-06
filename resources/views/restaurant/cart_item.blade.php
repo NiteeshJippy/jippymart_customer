@@ -12,8 +12,10 @@
     .product-name img {
         border-radius: 5px;
     }
+    #remove-coupon {
+    cursor: pointer !important;
+}
 </style>
-
 <?php
 if (@$order_complete){ ?>
 <div class="d-flex siddhi-cart-item-profile bg-white p-3">
@@ -26,18 +28,16 @@ if (@$order_complete){ ?>
     <?php if (@$cart['item'] && !empty($cart['item'])) {
         $restaurant_id = array_key_first($cart['item']);
         $restaurant_name = @$cart['restaurant']['name'];
-        ?>
-    <div class="restaurant-info mt-2">
-        <small class="text-muted">
-            <i class="fa fa-store"></i> Items from: <strong><?php echo $restaurant_name; ?></strong>
-        </small>
-        <button type="button" class="btn btn-sm btn-outline-danger ml-2" onclick="clearCart()">
-            <i class="fa fa-trash"></i> Clear Cart
-        </button>
-    </div>
+    ?>
+        <div class="d-flex justify-content-between align-items-center">
+            <small class="text-muted">
+            <i class="fa fa-store"></i> Items from: <strong id="restaurant-name"></strong></small>
+            <button type="button" class="btn btn-sm btn-outline-danger ml-2" onclick="clearCart()">
+                <i class="fa fa-trash"></i> Clear Cart
+            </button>
+        </div>
     <?php } ?>
 </div>
-
 <?php
 
 if (@$cart['item']){ ?>
@@ -126,6 +126,12 @@ if (@$cart['item']){ ?>
                                 <?php echo $value_item['name']; ?>
                         </p>
                     </div>
+        <div class="d-flex align-items-center justify-content col-md-3">
+            <p class="text-gray ml-3 mb-0 text-muted small">
+                Qty:
+            </p>
+        </div>
+
                 </div>
                     <?php
                     if (isset($value_item['variant_info']) && !empty($value_item['variant_info'])) {
@@ -190,13 +196,24 @@ if (@$cart['item']){ ?>
             <p class="text-gray mb-0 float-right ml-3 text-muted small">
                 <span class="currency-symbol-left"></span>
                 <span class="cart_iteam_total_<?php echo $key1; ?>">
-                    <?php $totalItemPrice = @floatval($value_item['price']) + @floatval($value_item['extra_price']) * @floatval($value_item['quantity']);
-                        $digit_decimal = 0;
-                        if (@$cart['decimal_degits']) {
-                            $digit_decimal = $cart['decimal_degits'];
-                        }
-                        echo number_format($totalItemPrice, $digit_decimal);
-                        ?>
+                    <?php
+                    // Calculate individual item total correctly
+                    $basePrice = @floatval($value_item['item_price']); // Use item_price as base price
+                    $extraPrice = @floatval($value_item['extra_price']);
+                    $quantity = @floatval($value_item['quantity']);
+                    $totalItemPrice = ($basePrice + $extraPrice) * $quantity;
+
+                    $digit_decimal = 0;
+                    if (@$cart['decimal_degits']) {
+                        $digit_decimal = $cart['decimal_degits'];
+                    }
+                    echo number_format($totalItemPrice, $digit_decimal);
+
+                    // Debug information (remove in production)
+                    if (isset($_GET['debug'])) {
+                        echo "<!-- Debug: basePrice=$basePrice, extraPrice=$extraPrice, quantity=$quantity, total=$totalItemPrice -->";
+                    }
+                    ?>
                 </span>
                 <span class="currency-symbol-right"></span>
             </p>
@@ -206,7 +223,13 @@ if (@$cart['item']){ ?>
                 class="fa fa-times"></i></div>
     </div>
 
-        <?php $total_price = $total_price + (floatval($value_item['price']) + (@floatval($value_item['extra_price']) * @floatval($value_item['quantity'])));
+        <?php
+        // Calculate total price correctly for each item
+        $basePrice = @floatval($value_item['item_price']); // Use item_price as base price
+        $extraPrice = @floatval($value_item['extra_price']);
+        $quantity = @floatval($value_item['quantity']);
+        $itemTotal = ($basePrice + $extraPrice) * $quantity;
+        $total_price = $total_price + $itemTotal;
     } ?>
 
     <?php } ?>
@@ -272,6 +295,9 @@ if (@$cart['item']){ ?>
                 $total = 0;
             }
         }
+        
+        // Calculate final total once and use it everywhere
+        $final_total = floatval($total) + floatval(@$cart['deliverycharge']) + floatval(@$cart['tax']) + floatval(@$cart['tip_amount']);
         ?>
 
     <div id="cart_list">
@@ -285,16 +311,62 @@ if (@$cart['item']){ ?>
                 </div>
                 <div class="d-flex justify-content-between mb-2">
                     <span>Delivery Fee</span>
-                    <span>₹ <?php echo number_format(floatval(@$cart['delivery_charge']), $digit_decimal); ?></span>
+                    <?php
+                    // Check if new delivery charge calculation exists
+                    if (isset($cart['delivery_charge_calculation'])) {
+                        $calculation = $cart['delivery_charge_calculation'];
+                        $uiComponents = $calculation['ui_components'] ?? [];
+                        
+                        // Debug information (remove in production)
+                        if (isset($_GET['debug'])) {
+                            echo "<!-- Debug: delivery_charge_calculation exists -->";
+                            echo "<!-- Debug: original_fee=" . $calculation['original_fee'] . " -->";
+                            echo "<!-- Debug: actual_fee=" . $calculation['actual_fee'] . " -->";
+                            echo "<!-- Debug: is_free_delivery=" . ($calculation['is_free_delivery'] ? 'true' : 'false') . " -->";
+                            echo "<!-- Debug: ui_type=" . $uiComponents['type'] . " -->";
+                            echo "<!-- Debug: deliverykm=" . ($cart['deliverykm'] ?? 'NOT SET') . " -->";
+                        }
+                        
+                        if ($uiComponents['type'] === 'free_delivery'): ?>
+                            <div class="text-right">
+                                <div class="text-success font-weight-bold"><?php echo $uiComponents['main_text']; ?></div>
+                                <div class="text-danger" style="text-decoration: line-through;"><?php echo $uiComponents['sub_text']; ?></div>
+                                <div class="text-muted"><?php echo $uiComponents['charged_amount']; ?></div>
+                            </div>
+                        <?php elseif ($uiComponents['type'] === 'extra_distance'): ?>
+                            <div class="text-right">
+                                <div class="text-success font-weight-bold"><?php echo $uiComponents['main_text']; ?></div>
+                                <div class="text-danger" style="text-decoration: line-through;"><?php echo $uiComponents['sub_text']; ?></div>
+                                <div><?php echo $uiComponents['charged_amount']; ?></div>
+                            </div>
+                        <?php else: ?>
+                            <span><?php echo $uiComponents['main_text']; ?></span>
+                        <?php endif;
+                    } else {
+                        // Fallback to old system display
+                        $newDeliveryCharge = @$cart['deliverycharge'] ?? @$cart['deliverychargemain'] ?? 0;
+                        
+                        // Debug information (remove in production)
+                        if (isset($_GET['debug'])) {
+                            echo "<!-- Debug: delivery_charge_calculation NOT exists -->";
+                            echo "<!-- Debug: deliverycharge=" . ($cart['deliverycharge'] ?? 'NOT SET') . " -->";
+                            echo "<!-- Debug: deliverychargemain=" . ($cart['deliverychargemain'] ?? 'NOT SET') . " -->";
+                            echo "<!-- Debug: newDeliveryCharge=" . $newDeliveryCharge . " -->";
+                        }
+                        ?>
+                        <span>₹<?php echo number_format($newDeliveryCharge, $digit_decimal); ?></span>
+                    <?php } ?>
                 </div>
                 <div class="d-flex justify-content-between mb-2">
                     <span>Platform Fee</span>
-                    <!-- <span>₹ <?php echo number_format(floatval(@$cart['platform_fee']), $digit_decimal); ?></span> -->
-                    <span><s>₹15</s></span>
+                    <span style="color: red;"><s>₹15</s></span>
                 </div>
                 <div class="d-flex justify-content-between mb-2">
                     <span>Coupon Discount</span>
                     <span class="text-success">₹<?php echo number_format(floatval($discount_amount), $digit_decimal); ?></span>
+                    <?php if($coupon_code > 0){ ?>
+                    <span id="remove-coupon" class="pointer text-danger">x</span>
+                    <?php } ?>
                 </div>
                 <div class="d-flex justify-content-between mb-2">
                     <span>Special Discount</span>
@@ -308,14 +380,20 @@ if (@$cart['item']){ ?>
                     <span>Taxes & Charges</span>
                     <span>₹ <?php echo number_format(floatval(@$cart['tax']), $digit_decimal); ?></span>
                 </div>
+                <?php if (isset($cart['sgst']) && isset($cart['gst'])) { ?>
+                <div class="d-flex justify-content-between mb-1" style="font-size: 0.85em; color: #666;">
+                    <span>&nbsp;&nbsp;&nbsp;SGST (5%)</span>
+                    <span>₹ <?php echo number_format(floatval(@$cart['sgst']), $digit_decimal); ?></span>
+                </div>
+                <div class="d-flex justify-content-between mb-2" style="font-size: 0.85em; color: #666;">
+                    <span>&nbsp;&nbsp;&nbsp;GST (18%)</span>
+                    <span>₹ <?php echo number_format(floatval(@$cart['gst']), $digit_decimal); ?></span>
+                </div>
+                <?php } ?>
                 <div class="d-flex justify-content-between mt-3 pt-2 border-top">
                     <span class="font-weight-bold">To Pay</span>
-                    <span class="font-weight-bold">
-                    ₹ <?php
-                          // Add tip amount to total for display
-                          $to_pay = floatval($total) + floatval(@$cart['tip_amount']);
-                          echo number_format($to_pay, $digit_decimal);
-                          ?>
+                                <span class="font-weight-bold">
+            ₹ <?php echo number_format($final_total, 2); ?>
             </span>
                 </div>
             </div>
@@ -401,18 +479,25 @@ if (@$cart['item']){ ?>
 @if (session('success'))
     <div class="alert alert-success mt-2">{{ session('success') }}</div>
 @endif
-<input type="text" name="coupon_code" id="coupon_code" class="form-control mb-2"
-    value="<?php echo @$cart['coupon']['coupon_code']; ?>"
-    data-vendor-id="<?php echo @$cart['restaurant']['id']; ?>"
-    placeholder="Enter coupon code" required>
-    <div id="coupon-message"></div>
-    <button type="button" id="apply-coupon-code" class="btn btn-primary btn-sm" data-vendor-id="<?php echo @$cart['restaurant']['id']; ?>">Apply Coupon</button>
-    <button type="button" id="remove-coupon" class="btn btn-primary btn-sm ml-2">Remove Coupon</button>
+            <div class="input-group mb-2">
+                <input type="text" name="coupon_code" id="coupon_code"
+                       class="form-control"
+                       value="<?php echo @$cart['coupon']['coupon_code']; ?>"
+                       data-vendor-id="<?php echo @$cart['restaurant']['id']; ?>"
+                       placeholder="Enter coupon code" required>
+
+                <button type="button" id="apply-coupon-code"
+                        class="btn btn-primary btn-sm"
+                        data-vendor-id="<?php echo @$cart['restaurant']['id']; ?>">
+                    Apply Coupon
+                </button>
+            </div>
+            <div id="coupon-message"></div>
+    <!-- <button type="button" id="remove-coupon" class="btn btn-primary btn-sm ml-2">Remove Coupon</button> -->
 @php
     $cartTotal = session('$to_pay') ?? 0;
 @endphp
-
-{{-- Coupon suggestions --}}
+    <!-- {{-- Coupon suggestions --}}
 @if ($cartTotal < 299)
     <p class="text-muted mt-2">Shop ₹{{ 299 }} more to unlock ₹100 off with code <strong>FLAT100</strong>.</p>
 @elseif ($cartTotal < 599)
@@ -420,7 +505,7 @@ if (@$cart['item']){ ?>
     <p class="text-muted">Shop ₹{{ 599 - $to_pay }} more to unlock ₹50 off with code <strong>SAVE50</strong>.</p>
 @else
     <p class="text-success mt-2">You can use <strong>SAVE30</strong> or <strong>SAVE50</strong>.</p>
-@endif
+@endif -->
 </div>
         <!-- <button class="btn btn-block mt-3" style="background-color: #ff9800; color: #fff; border: none;" type="button"
                 onclick="finalCheckout()">
@@ -431,7 +516,7 @@ if (@$cart['item']){ ?>
             &rarr;
         </button> -->
 
-        <a href="{{route('qrcode')}}">
+        <!-- <a href="{{route('qrcode')}}">
         <button class="btn btn-block mt-3" style="background-color: #ff9800; color: #fff; border: none;" type="button"
                 onclick="">
             <input type="hidden" id="total_pay"
@@ -440,7 +525,7 @@ if (@$cart['item']){ ?>
                 id="pay-total"><?php echo number_format(floatval($total) + floatval(@$cart['tip_amount']), $digit_decimal)  + floatval(@$cart['five_percent_charge'])?></span>
             &rarr;
         </button>
-        </a>
+        </a> -->
             <?php
             $total_with_tip = floatval($total) + floatval(@$cart['tip_amount']);
         if ($total_with_tip > 599) { ?>
@@ -449,40 +534,37 @@ if (@$cart['item']){ ?>
                 Please choose another payment method.</small>
         </div>
         <?php } ?>
-
-
     </div>
-
     <!-- Thanks with a tip! Section -->
     <!-- <div class="bg-white p-3 clearfix delivery-box" style="<?php if (!@$cart['item']){ ?> display:none; <?php } ?>">
     <h3>{{ trans('lang.delivery_option') }}</h3>
     <div class="delevery-option">
         <?php $delivery_option = '';
-                                                                                                                                                                              if (@$cart['delivery_option']) {
-                                                                                                                                                                                  $delivery_option = $cart['delivery_option'];
-                                                                                                                                                                              } else {
-                                                                                                                                                                                  $delivery_option = @$cart['delivery_option'];
-                                                                                                                                                                                  Session::get('takeawayOption');
-                                                                                                                                                                                  if (Session::get('takeawayOption') == 'true') {
-                                                                                                                                                                                      $delivery_option = 'takeaway';
-                                                                                                                                                                                  } else {
-                                                                                                                                                                                      $delivery_option = 'delivery';
-                                                                                                                                                                                  }
-                                                                                                                                                                              }
-                                                                                                                                                                              ?>
-        <input type="hidden" name="delivery_option" value="<?php echo $delivery_option; ?>">
+        if (@$cart['delivery_option']) {
+            $delivery_option = $cart['delivery_option'];
+        } else {
+            $delivery_option = @$cart['delivery_option'];
+            Session::get('takeawayOption');
+            if (Session::get('takeawayOption') == 'true') {
+                $delivery_option = 'takeaway';
+            } else {
+                $delivery_option = 'delivery';
+            }
+        }
+        ?>
+<input type="hidden" name="delivery_option" value="<?php echo $delivery_option; ?>">
         <?php if ($delivery_option == "takeaway"){ ?>
         <label class="custom-control-labels" for="takeaway">{{ trans('lang.take_away') }}({{ trans('lang.free') }})</label>
         <?php }else{ ?>
         <label class="custom-control-labels" for="takeaway">Delivery
             <?php if (@$cart['deliverychargemain'] && (@$cart['isSelfDelivery'] === false || @$cart['isSelfDelivery'] === "false")){ ?> (<span class="currency-symbol-left"></span>
             <?php
-                                                                                                                                                                $digit_decimal = 0;
-                                                                                                                                                                if (@$cart['decimal_degits']) {
-                                                                                                                                                                    $digit_decimal = $cart['decimal_degits'];
-                                                                                                                                                                }
-                                                                                                                                                                echo number_format(floatval(@$cart['deliverychargemain']), $digit_decimal);
-                                                                                                                                                                ?>
+                                                $digit_decimal = 0;
+                                                if (@$cart['decimal_degits']) {
+                                                    $digit_decimal = $cart['decimal_degits'];
+                                                }
+                                                echo number_format(floatval(@$cart['deliverychargemain']), $digit_decimal);
+                                                ?>
         <span class="currency-symbol-right"></span> )
 <?php } ?>
         </label>
@@ -496,8 +578,8 @@ if (@$cart['item']){ ?>
     <span class="float-right text-dark">
         <span class="currency-symbol-left"></span>
 <?php
-        $digit_decimal = 0;
-        if (@$cart['decimal_degits']) {
+        $digit_decimal = 2; // Force 2 decimal places for proper display
+        if (@$cart['decimal_degits'] && $cart['decimal_degits'] > 0) {
             $digit_decimal = $cart['decimal_degits'];
         }
         echo number_format(floatval($total_price), $digit_decimal);
@@ -676,34 +758,49 @@ if (@$cart['item']){ ?>
     </p>
     <?php } ?>
         <input type="hidden" value="<?php echo @$cart['deliverycharge']; ?>" id="deliveryCharge">
+        <!-- Debug: Delivery charge value being rendered -->
+        <script>
+            console.log('Cart item delivery charge debug:', {
+                sessionDeliveryCharge: '<?php echo @$cart['deliverycharge']; ?>',
+                hiddenInputValue: document.getElementById('deliveryCharge') ? document.getElementById('deliveryCharge').value : 'NOT FOUND',
+                cartData: <?php echo json_encode($cart ?? []); ?>
+            });
+        </script>
     <input type="hidden" value="" id="deliveryChargeMain">
     <input type="hidden" value="<?php echo $cart['distanceType'] ?? ''; ?>" id="distanceType">
-    <input type="hidden" id="adminCommission" value="0">
-    <input type="hidden" id="adminCommissionType" value="Fix Price">
-    <input type="hidden" id="total_pay" value="<?php echo round($total, 2); ?>">
-    <hr>
-    <h6 class="font-weight-bold mb-0">{{ trans('lang.total') }}
-    <p class="float-right">
-        <span class="currency-symbol-left"></span>
-        <span>
-<?php
-        $digit_decimal = 0;
-        if (@$cart['decimal_degits']) {
+    <?php
+        $digit_decimal = 2; // Force 2 decimal places for proper display
+        if (@$cart['decimal_degits'] && $cart['decimal_degits'] > 0) {
             $digit_decimal = $cart['decimal_degits'];
         }
-        echo number_format(floatval($total), $digit_decimal);
-        ?>
-        </span>
-        <span class="currency-symbol-right"></span>
-    </p>
+    ?>
+    <input type="hidden" id="adminCommission" value="0">
+    <input type="hidden" id="adminCommissionType" value="Fix Price">
+    <input type="hidden" id="total_pay" value="<?php echo number_format($final_total, 2, '.', ''); ?>">
+    <hr>
+    <!-- <h6 class="font-weight-bold mb-0">{{ trans('lang.total') }} -->
+    <!-- <p class="float-right">
+        <span class="currency-symbol-left"></span>
+        <span> -->
+        <!-- <?php echo number_format($final_total, 2); ?> -->
+        <!-- </span> -->
+        <!-- <span class="currency-symbol-right"></span> -->
+    <!-- </p> -->
 </h6>
-<a class="btn btn-primary btn-block btn-lg" href="javascript:void(0)" onclick="finalCheckout()">{{ trans('lang.pay') }}
+<a class="btn btn-primary btn-block btn-lg" href="{{route('qrcode')}}" >{{ trans('lang.pay') }}
     <span class="currency-symbol-left"></span>
-<?php echo number_format(floatval($total), @$cart['decimal_degits']); ?>
+    <?php echo number_format($final_total, 2); ?>
         <span class="currency-symbol-right"></span>
         <i class="feather-arrow-right"></i>
     </a>
-</div> -->
+
+    <!-- <a class="btn btn-primary btn-block btn-lg" href="javascript:void(0)" onclick="finalCheckout()">{{ trans('lang.pay') }}
+    <span class="currency-symbol-left"></span>
+    <?php echo number_format($final_total, 2); ?>
+        <span class="currency-symbol-right"></span>
+        <i class="feather-arrow-right"></i>
+    </a> -->
+</div>
 
     <?php }else{ ?>
 

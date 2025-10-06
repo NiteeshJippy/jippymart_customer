@@ -12,7 +12,7 @@
     }
 ?>
 <link href="{{ asset('vendor/select2/dist/css/select2.min.css')}}" rel="stylesheet">
-<link href="{{ asset('/css/font-awesome.min.css')}}" rel="stylesheet">
+<!-- Font Awesome loaded globally in app.blade.php -->
 <div class="siddhi-signup login-page vh-100">
     <div class="d-flex align-items-center justify-content-center py-3">
         <div class="col-md-6">
@@ -309,11 +309,11 @@
             $("#field_error1").css('display','block');
             $("#field_error1").html("");
             jQuery("#field_error1").html("Invalid Email Address. Please enter a valid email.");
-        } 
+        }
         else if ($("#mobileNumber").val() == ""){
             $("#field_error1").css('display','block');
             $("#field_error1").html("");
-            jQuery("#field_error1").html("Please enter phone number");  
+            jQuery("#field_error1").html("Please enter phone number");
         }
         else if (jQuery("#mobileNumber").val() && jQuery("#country_selector").val()) {
             $("#field_error1").css('display','none');

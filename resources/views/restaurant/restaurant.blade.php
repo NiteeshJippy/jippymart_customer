@@ -4,10 +4,11 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+<script src="{{ asset('js/restaurant-status.js') }}"></script>
 
 <!-- Main Content Container (do NOT wrap header) -->
 <div class="max-w-4xl mx-auto bg-white text-gray-800 font-sans px-4 md:px-8 lg:px-16 py-6">
-    <!-- Bread crumbs -->pooooooo
+    <!-- Bread crumbs -->
     <nav class="flex items-center space-x-2 text-sm font-medium text-gray-500 mb-6 bg-gray-50 rounded-lg px-4 py-3 shadow-sm border border-gray-100" id="breadcrumb-nav" aria-label="Breadcrumb">
         <a href="/" class="hover:text-green-600 transition-colors flex items-center gap-1">
             <svg class="w-4 h-4 mr-1 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0h6"/></svg>
@@ -255,7 +256,7 @@
 <input type="hidden" name="restaurant_id" id="restaurant_id" value="<?php echo isset($_GET['id']) ? $_GET['id'] : ''; ?>">
 <input type="hidden" name="restaurant_name_url" id="restaurant_name_url" value="<?php echo isset($restaurantName) ? $restaurantName : ''; ?>">
 <input type="hidden" name="zone_name_url" id="zone_name_url" value="<?php echo isset($zoneName) ? $zoneName : ''; ?>">
-<input type="hidden" name="restaurant_name" id="restaurant_name" value="">
+<input type="hidden" name="restaurant_name" id="restaurant_name" value="<?php echo isset($restaurantName) ? $restaurantName : ''; ?>">
 <input type="hidden" name="restaurant_location" id="restaurant_location" value="">
 <input type="hidden" name="restaurant_latitude" id="restaurant_latitude" value="">
 <input type="hidden" name="restaurant_longitude" id="restaurant_longitude" value="">
@@ -273,6 +274,23 @@
     var currentCurrency = '';
     var currencyAtRight = false;
     var decimal_degits = 0;
+    var deliveryChargemain = []; // Initialize delivery charge main variable
+    
+    // Check if restaurantStatusManager is loaded
+    console.log('RestaurantStatusManager check on page load:', {
+        manager: !!window.restaurantStatusManager,
+        managerType: typeof window.restaurantStatusManager
+    });
+    
+    // Load delivery charge configuration
+    var refDeliveryCharge = database.collection('settings').doc('deliveryCharge');
+    refDeliveryCharge.get().then(async function (deliveryChargeSnapshots) {
+        if (deliveryChargeSnapshots.exists) {
+            deliveryChargemain = deliveryChargeSnapshots.data();
+            console.log('Loaded delivery charge config:', deliveryChargemain);
+        }
+    });
+    
     var refCurrency = database.collection('currencies').where('isActive', '==', true);
     refCurrency.get().then(async function (snapshots) {
         var currencyData = snapshots.docs[0].data();
@@ -379,6 +397,9 @@
         if (!vendorId && restaurantNameUrl && zoneNameUrl) {
             await resolveVendorIdFromName();
         }
+        
+        // Sync restaurant cart from product detail page
+        syncRestaurantCart();
 
         var subscriptionModel = localStorage.getItem('subscriptionModel');
 
@@ -508,6 +529,7 @@
 
                 // Set current restaurant for favorite functionality
                 setCurrentRestaurant(vendorId, vendorDetails.title);
+                // Initialize status as closed (will be updated by failproof system)
                 $("#vendor_shop_status").html("{{ trans('lang.closed') }}");
                 $("#vendor_shop_status").addClass('close');
                 var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
@@ -524,7 +546,11 @@
                     minute = '0' + minute
                 }
                 var currentHours = hour + ':' + minute;
+                // Store working hours for failproof status system
                 if (vendorDetails.hasOwnProperty('workingHours')) {
+                    restaurantWorkingHours = vendorDetails.workingHours;
+                    
+                    // Display working hours in UI
                     for (i = 0; i < vendorDetails.workingHours.length; i++) {
                         var day = vendorDetails.workingHours[i]['day'];
                         if (vendorDetails.workingHours[i]['day'] == currentDay) {
@@ -548,12 +574,6 @@
                                         time + ' ' + to +
                                         '<br/><span class="margine" style="margin-right: 65px;"></span>'
                                     );
-                                    if (currentHours >= timeslot[`from`] && currentHours <= timeslot[
-                                        `to`]) {
-                                        $("#vendor_shop_status").html("{{ trans('lang.open') }}");
-                                        $("#vendor_shop_status").removeClass('close');
-                                        $("#vendor_shop_status").addClass('open');
-                                    }
                                 }
                             } else {
                                 $('.time').html('');
@@ -561,22 +581,34 @@
                         }
                     }
                 }
-                if (vendorDetails.hasOwnProperty('isOpen') && vendorDetails.isOpen == true) {
-                    vendorOpen = vendorDetails.isOpen;
+                // Set restaurant open/close status
+                if (vendorDetails.hasOwnProperty('isOpen')) {
+                    restaurantIsOpen = vendorDetails.isOpen;
                 } else {
+                    restaurantIsOpen = null; // No manual toggle set
                 }
                 var newdeliveryCharge = [];
                 try {
-                    if (deliveryChargemain.vendor_can_modify) {
+                    if (deliveryChargemain && deliveryChargemain.vendor_can_modify) {
                         if (vendorDetails.deliveryCharge) {
-                            if (vendorDetails.deliveryCharge.delivery_charges_per_km && vendorDetails
-                                .deliveryCharge.minimum_delivery_charges && vendorDetails.deliveryCharge
-                                .minimum_delivery_charges_within_km) {
+                            // Check if delivery charge values are valid numbers (not NaN)
+                            const perKm = parseFloat(vendorDetails.deliveryCharge.delivery_charges_per_km);
+                            const minCharge = parseFloat(vendorDetails.deliveryCharge.minimum_delivery_charges);
+                            const withinKm = parseFloat(vendorDetails.deliveryCharge.minimum_delivery_charges_within_km);
+                            
+                            if (!isNaN(perKm) && !isNaN(minCharge) && !isNaN(withinKm) && 
+                                perKm > 0 && minCharge > 0 && withinKm > 0) {
                                 deliveryChargemain = vendorDetails.deliveryCharge;
+                                console.log('Using vendor delivery charges:', deliveryChargemain);
+                            } else {
+                                console.log('Vendor delivery charges are invalid (NaN or 0):', vendorDetails.deliveryCharge);
                             }
                         }
+                    } else {
+                        console.log('Vendor cannot modify delivery charges or deliveryChargemain not loaded yet');
                     }
                 } catch (error) {
+                    console.error('Error processing delivery charges:', error);
                 }
                 if (vendorDetails.hasOwnProperty('specialDiscount')) {
                     specialOfferVendor = vendorDetails.specialDiscount;
@@ -761,9 +793,8 @@
                     document.getElementById('restaurant-rating').textContent = randomRating;
                     document.getElementById('restaurant-ratings-count').textContent = '(New)';
                 }
-                // Set price for two dynamically between 380 and 600
-                var priceForTwo = Math.floor(Math.random() * (600 - 380 + 1)) + 380;
-                document.getElementById('restaurant-price-for-two').textContent = '₹' + priceForTwo + ' for two';
+                // Calculate dynamic price for two based on actual product prices
+                calculatePriceForTwo();
                 // Set cuisine and category dynamically (array or string)
                 var cuisine = '';
                 var category = '';
@@ -810,8 +841,107 @@
                     locationElem.textContent = vendorDetails.location || '-';
                 }
                 restaurantWorkingHours = vendorDetails.workingHours || [];
+                
+                // Validate and clean working hours - remove days with empty timeslots
+                if (restaurantWorkingHours.length > 0) {
+                    restaurantWorkingHours = restaurantWorkingHours.filter(day => 
+                        day.timeslot && Array.isArray(day.timeslot) && day.timeslot.length > 0
+                    );
+                    console.log('Cleaned working hours:', restaurantWorkingHours);
+                }
+                
+                // Apply failproof restaurant status system
+                const status = getRestaurantStatus(restaurantWorkingHours, restaurantIsOpen);
+                console.log('Restaurant Status Check:', {
+                    restaurantIsOpen: restaurantIsOpen,
+                    workingHours: restaurantWorkingHours,
+                    status: status
+                });
+                updateRestaurantStatusUI(status);
+                
+                // Start monitoring status changes
+                startStatusMonitoring();
+                
+                // Now render the menu with the correct restaurant status
+                renderMenuAccordionWithFilters();
             }
         })
+    }
+
+    // Function to calculate dynamic price for two based on actual product prices
+    async function calculatePriceForTwo() {
+        try {
+            // Fetch products for this vendor
+            const productsSnapshot = await vendorProductsRef.get();
+            const products = [];
+            
+            productsSnapshot.docs.forEach(function(doc) {
+                let data = doc.data();
+                data.id = doc.id;
+                products.push(data);
+            });
+
+            if (products.length === 0) {
+                // Fallback to random price if no products
+                var priceForTwo = Math.floor(Math.random() * (600 - 380 + 1)) + 380;
+                document.getElementById('restaurant-price-for-two').textContent = '₹' + priceForTwo + ' for two';
+                return;
+            }
+
+            // Filter products with discount price below 500
+            const affordableProducts = products.filter(product => {
+                const price = parseFloat(product.price) || 0;
+                const disPrice = parseFloat(product.disPrice) || 0;
+                const finalPrice = disPrice > 0 ? disPrice : price;
+                return finalPrice > 0 && finalPrice < 500;
+            });
+
+            if (affordableProducts.length < 2) {
+                // If not enough affordable products, use any products
+                const validProducts = products.filter(product => {
+                    const price = parseFloat(product.price) || 0;
+                    const disPrice = parseFloat(product.disPrice) || 0;
+                    return (disPrice > 0 ? disPrice : price) > 0;
+                });
+                
+                if (validProducts.length >= 2) {
+                    // Take 2 random products
+                    const shuffled = validProducts.sort(() => 0.5 - Math.random());
+                    const selectedProducts = shuffled.slice(0, 2);
+                    
+                    let totalPrice = 0;
+                    selectedProducts.forEach(product => {
+                        const price = parseFloat(product.price) || 0;
+                        const disPrice = parseFloat(product.disPrice) || 0;
+                        totalPrice += disPrice > 0 ? disPrice : price;
+                    });
+                    
+                    document.getElementById('restaurant-price-for-two').textContent = '₹' + Math.round(totalPrice) + ' for two';
+                } else {
+                    // Fallback to random price
+                    var priceForTwo = Math.floor(Math.random() * (600 - 380 + 1)) + 380;
+                    document.getElementById('restaurant-price-for-two').textContent = '₹' + priceForTwo + ' for two';
+                }
+            } else {
+                // Take 2 random affordable products
+                const shuffled = affordableProducts.sort(() => 0.5 - Math.random());
+                const selectedProducts = shuffled.slice(0, 2);
+                
+                let totalPrice = 0;
+                selectedProducts.forEach(product => {
+                    const price = parseFloat(product.price) || 0;
+                    const disPrice = parseFloat(product.disPrice) || 0;
+                    totalPrice += disPrice > 0 ? disPrice : price;
+                });
+                
+                document.getElementById('restaurant-price-for-two').textContent = '₹' + Math.round(totalPrice) + ' for two';
+            }
+        } catch (error) {
+            console.error('Error calculating price for two:', error);
+            // Fallback to random price
+            var priceForTwo = Math.floor(Math.random() * (600 - 380 + 1)) + 380;
+            document.getElementById('restaurant-price-for-two').textContent = '₹' + priceForTwo + ' for two';
+        }
     }
 
     async function getCategories() {
@@ -956,9 +1086,57 @@
             });
         }
 
-        // Render menu accordion dynamically
-        renderMenuAccordionWithFilters();
+        // Menu will be rendered after vendor details are loaded
     }
+
+    // Helper function to check restaurant status with fallback
+    function isRestaurantOpenForMenu() {
+        if (window.restaurantStatusManager) {
+            return window.restaurantStatusManager.isRestaurantOpenNow(restaurantWorkingHours, restaurantIsOpen);
+        } else {
+            // Fallback logic
+            console.log('RestaurantStatusManager not available, using fallback logic');
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const now = new Date();
+            const currentDay = days[now.getDay()];
+            let hour = now.getHours();
+            let minute = now.getMinutes();
+            if (hour < 10) hour = '0' + hour;
+            if (minute < 10) minute = '0' + minute;
+            const currentTime = hour + ':' + minute;
+            
+            let withinWorkingHours = false;
+            if (Array.isArray(restaurantWorkingHours)) {
+                for (let i = 0; i < restaurantWorkingHours.length; i++) {
+                    if (restaurantWorkingHours[i]['day'] === currentDay) {
+                        const slots = restaurantWorkingHours[i]['timeslot'] || [];
+                        for (let j = 0; j < slots.length; j++) {
+                            const from = slots[j]['from'];
+                            const to = slots[j]['to'];
+                            if (currentTime >= from && currentTime <= to) {
+                                withinWorkingHours = true;
+                                break;
+                            }
+                        }
+                        if (withinWorkingHours) break;
+                    }
+                }
+            }
+            
+            const result = restaurantIsOpen === true && withinWorkingHours;
+            console.log('Fallback status check:', {
+                restaurantIsOpen: restaurantIsOpen,
+                withinWorkingHours: withinWorkingHours,
+                currentDay: currentDay,
+                currentTime: currentTime,
+                result: result
+            });
+            return result;
+        }
+    }
+    
+    // Global variable to store restaurant status for menu rendering
+    let globalRestaurantStatus = false;
 
     function renderStars(rating, uniqueId = '') {
         let stars = '';
@@ -1071,6 +1249,36 @@
             productsByCategory[product.categoryID].push(product);
         });
 
+        // Debug restaurant status before rendering menu
+        const statusCheck = window.restaurantStatusManager ? window.restaurantStatusManager.isRestaurantOpenNow(restaurantWorkingHours, restaurantIsOpen) : 'Manager not available';
+        console.log('Before rendering menu - Status check:', {
+            restaurantStatusManager: !!window.restaurantStatusManager,
+            restaurantWorkingHours: restaurantWorkingHours,
+            restaurantIsOpen: restaurantIsOpen,
+            statusCheck: statusCheck
+        });
+        
+        // Use the status check result for all menu items
+        const isRestaurantOpen = statusCheck === true;
+        
+        // ROBUST STATUS CHECK: Use fallback logic if restaurantStatusManager is not available
+        let finalRestaurantStatus = false;
+        
+        if (window.restaurantStatusManager) {
+            // Use the global restaurant status manager
+            finalRestaurantStatus = window.restaurantStatusManager.isRestaurantOpenNow(restaurantWorkingHours, restaurantIsOpen);
+            console.log('Using restaurantStatusManager:', finalRestaurantStatus);
+        } else {
+            // Fallback to local status calculation
+            finalRestaurantStatus = isRestaurantOpen;
+            console.log('Using fallback status calculation:', finalRestaurantStatus);
+        }
+        
+        // Store the status globally for use in menu rendering
+        globalRestaurantStatus = finalRestaurantStatus;
+        
+        console.log('Final restaurant status for menu:', globalRestaurantStatus);
+        
         // Render accordions
         let accordionHtml = '';
         categories.forEach(function(category) {
@@ -1147,7 +1355,7 @@
                             <div class="relative w-full h-32 sm:h-28 rounded-xl overflow-hidden shadow-sm mb-3">
                                 <img src="${imgSrc}" alt="${product.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
                             </div>
-                            ${isRestaurantOpenNow(restaurantWorkingHours) ? `
+                            ${window.restaurantStatusManager && window.restaurantStatusManager.isRestaurantOpenNow(restaurantWorkingHours, restaurantIsOpen) ? `
                             <button
                                 class="w-full bg-gradient-to-r from-green-500 to-green-600 text-white text-sm font-bold px-6 py-2 rounded-full shadow hover:from-green-600 hover:to-green-700 focus:outline focus:outline-2 focus:outline-orange-600 add-to-cart-btn transition-colors duration-200"
                                 data-product-id="${product.id}"
@@ -1258,6 +1466,18 @@
             html = html +
                 '<div class="star position-relative mt-3"><span class="badge badge-success"><i class="feather-star"></i>' +
                 rating + ' (' + reviewsCount + ')</span></div>';
+            
+            // Add quantity display
+            if (val.hasOwnProperty('quantity')) {
+                if (val.quantity == -1) {
+                    html = html + '<div class="mt-2"><small class="text-success"><i class="feather-check-circle"></i> In Stock (Unlimited)</small></div>';
+                } else if (val.quantity > 0) {
+                    html = html + '<div class="mt-2"><small class="text-warning"><i class="feather-alert-circle"></i> Only ' + val.quantity + ' left</small></div>';
+                } else {
+                    html = html + '<div class="mt-2"><small class="text-danger"><i class="feather-x-circle"></i> Out of Stock</small></div>';
+                }
+            }
+            
             html = html + '</div>';
             html = html + '</div></div></div>';
         });
@@ -1358,13 +1578,14 @@
                             <div class="relative w-full h-32 sm:h-28 rounded-xl overflow-hidden shadow-sm mb-3">
                                 <img src="${imgSrc}" alt="${product.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
                             </div>
-                            ${isRestaurantOpenNow(restaurantWorkingHours) ? `
+                            ${window.restaurantStatusManager && window.restaurantStatusManager.isRestaurantOpenNow(restaurantWorkingHours, restaurantIsOpen) ? `
                             <button
                                 class="w-full bg-gradient-to-r from-green-500 to-green-600 text-white text-sm font-bold px-6 py-2 rounded-full shadow hover:from-green-600 hover:to-green-700 focus:outline focus:outline-2 focus:outline-orange-600 add-to-cart-btn transition-colors duration-200"
                                 data-product-id="${product.id}"
                                 data-vendor-id="${vendorId}"
                                 data-category-id="${product.categoryID}"
                                 data-product-name="${product.name}"
+                                data-product-disPrice="${product.disPrice}"
                                 data-product-price="${product.price}"
                                 data-product-photo="${imgSrc}"
                             >
@@ -1396,6 +1617,48 @@
     function setCart(cart) {
         localStorage.setItem('cart', JSON.stringify(cart));
         console.log('setCart:', cart);
+    }
+    
+    // Sync restaurant cart from product detail page
+    function syncRestaurantCart() {
+        let restaurantCart = localStorage.getItem('restaurant_cart');
+        if (restaurantCart) {
+            try {
+                let cart = JSON.parse(restaurantCart);
+                if (Array.isArray(cart) && cart.length > 0) {
+                    // Check if items are from the same restaurant
+                    const firstItem = cart[0];
+                    if (firstItem.vendor_id === vendorId) {
+                        // Merge with existing cart
+                        let existingCart = getCart();
+                        cart.forEach(item => {
+                            const idx = existingCart.findIndex(i => i.product_id === item.product_id);
+                            if (idx > -1) {
+                                existingCart[idx].quantity += item.quantity;
+                            } else {
+                                existingCart.push(item);
+                            }
+                        });
+                        setCart(existingCart);
+                        console.log('Synced restaurant cart items:', cart);
+                        
+                        // Clear the restaurant cart after syncing
+                        localStorage.removeItem('restaurant_cart');
+                        
+                        // Show success message
+                        Swal.fire({
+                            title: 'Cart Synced!',
+                            text: 'Items from product page have been added to your cart.',
+                            icon: 'success',
+                            timer: 2000,
+                            showConfirmButton: false
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error syncing restaurant cart:', error);
+            }
+        }
     }
     function addToCart(item) {
         let cart = getCart();
@@ -1441,24 +1704,32 @@
     // Event delegation for add-to-cart buttons
     document.addEventListener('click', function(e) {
         if (e.target.classList.contains('add-to-cart-btn')) {
-            if (!isRestaurantOpenNow(restaurantWorkingHours)) {
+            if (!window.restaurantStatusManager || !window.restaurantStatusManager.isRestaurantOpenNow(restaurantWorkingHours, restaurantIsOpen)) {
+                const status = getRestaurantStatus(restaurantWorkingHours, restaurantIsOpen);
                 Swal.fire({
                     title: 'Restaurant Closed',
-                    text: 'You cannot add items to the cart because the restaurant is currently closed.',
+                    text: status.reason,
                     icon: 'error',
                     confirmButtonText: 'OK'
                 });
                 return;
             }
             const btn = e.target;
+            const disPrice = btn.getAttribute('data-product-disPrice');
+            const regularPrice = btn.getAttribute('data-product-price');
+            // Use discounted price if available, otherwise use regular price
+            const finalPrice = disPrice && disPrice !== '0' && disPrice !== 'null' ? disPrice : regularPrice;
+            
             const item = {
                 product_id: btn.getAttribute('data-product-id'),
                 vendor_id: btn.getAttribute('data-vendor-id'),
                 category_id: btn.getAttribute('data-category-id'),
                 name: btn.getAttribute('data-product-name'),
-                price: btn.getAttribute('data-product-price'),
+                price: finalPrice,
+                disPrice: disPrice,
                 photo: btn.getAttribute('data-product-photo'),
-                quantity: 1
+                quantity: 1,
+                restaurant_name: document.getElementById('restaurant_name').value // <-- add this
             };
             addToCart(item);
         }
@@ -1481,6 +1752,14 @@
             const itemTotal = parseFloat(item.price) * item.quantity;
             totalQty += item.quantity;
             totalAmount += itemTotal;
+            
+            // Show price information with discount if available
+            let priceDisplay = `₹${(itemTotal).toFixed(2)}`;
+            if (item.disPrice && item.disPrice !== '0' && item.disPrice !== 'null' && parseFloat(item.disPrice) < parseFloat(item.price)) {
+                const originalTotal = parseFloat(item.disprice) * item.quantity;
+                priceDisplay = `₹${(itemTotal).toFixed(2)} <span class="text-gray-400 line-through text-xs">₹${originalTotal.toFixed(2)}</span>`;
+            }
+            
             html += `<li class="py-2 flex items-center group">
                     <img src="${item.photo}" alt="${item.name}" class="w-12 h-12 object-cover rounded mr-3 border">
                     <div class="flex-1">
@@ -1489,7 +1768,7 @@
                             <button class="cart-qty-btn bg-gray-200 px-2 rounded text-lg font-bold" data-action="decrease" data-idx="${idx}">-</button>
                             <span class="mx-2">${item.quantity}</span>
                             <button class="cart-qty-btn bg-gray-200 px-2 rounded text-lg font-bold" data-action="increase" data-idx="${idx}">+</button>
-                            <span class="ml-4">₹${(itemTotal).toFixed(2)}</span>
+                            <span class="ml-4">${priceDisplay}</span>
                         </div>
                     </div>
                     <button class="cart-remove-btn ml-4 text-gray-400 hover:text-red-600 text-xl" data-idx="${idx}" title="Remove">
@@ -1541,6 +1820,28 @@
             }
             setCart(cart);
             renderCartModal();
+
+            // --- SYNC WITH BACKEND/SIDEBAR ---
+            const item = cart[idx];
+            if (item) {
+                $.ajax({
+                    type: 'POST',
+                    url: '/change-quantity-cart',
+                    data: {
+                        id: item.product_id,
+                        restaurant_id: item.vendor_id,
+                        quantity: item.quantity,
+                        _token: document.querySelector('meta[name=csrf-token]').content
+                    },
+                    success: function(data) {
+                        if (data && data.html) {
+                            if ($('#cart_list').length) {
+                                $('#cart_list').html(data.html);
+                            }
+                        }
+                    }
+                });
+            }
         } else if (e.target.closest('.cart-remove-btn')) {
             const btn = e.target.closest('.cart-remove-btn');
             const idx = parseInt(btn.getAttribute('data-idx'));
@@ -1608,9 +1909,9 @@
                 name: item.name,
                 quantity: item.quantity,
                 stock_quantity: item.stock_quantity || '',
-                item_price: item.price, // assuming price is item_price
+                item_price: item.price, // using the final price (discounted if available)
                 price: item.price,
-                dis_price: item.dis_price || '',
+                dis_price: item.disPrice || '',
                 extra_price: item.extra_price || 0,
                 extra: item.extra || [],
                 size: item.size || '',
@@ -1745,9 +2046,15 @@
         setCurrentRestaurant(vendorId, 'Restaurant');
     }
 
-    // Utility function to check if restaurant is open based on workingHours
-    function isRestaurantOpenNow(workingHours) {
-        if (!Array.isArray(workingHours)) return false;
+    // Use global restaurantStatusManager instead of local function
+    
+    // Enhanced function to get restaurant status with detailed information
+    function getRestaurantStatus(workingHours, isOpen = null) {
+        if (window.restaurantStatusManager) {
+            return window.restaurantStatusManager.getRestaurantStatus(workingHours, isOpen);
+        }
+        
+        // Fallback if restaurantStatusManager is not available
         const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const now = new Date();
         const currentDay = days[now.getDay()];
@@ -1756,21 +2063,120 @@
         if (hour < 10) hour = '0' + hour;
         if (minute < 10) minute = '0' + minute;
         const currentTime = hour + ':' + minute;
-        for (let i = 0; i < workingHours.length; i++) {
-            if (workingHours[i]['day'] === currentDay) {
-                const slots = workingHours[i]['timeslot'] || [];
-                for (let j = 0; j < slots.length; j++) {
-                    const from = slots[j]['from'];
-                    const to = slots[j]['to'];
-                    if (currentTime >= from && currentTime <= to) {
-                        return true;
+        
+        let withinWorkingHours = false;
+        let workingHoursInfo = {
+            day: currentDay,
+            currentTime: currentTime,
+            slots: []
+        };
+        
+        if (Array.isArray(workingHours)) {
+            for (let i = 0; i < workingHours.length; i++) {
+                if (workingHours[i]['day'] === currentDay) {
+                    const slots = workingHours[i]['timeslot'] || [];
+                    workingHoursInfo.slots = slots;
+                    for (let j = 0; j < slots.length; j++) {
+                        const from = slots[j]['from'];
+                        const to = slots[j]['to'];
+                        if (currentTime >= from && currentTime <= to) {
+                            withinWorkingHours = true;
+                            break;
+                        }
                     }
                 }
             }
         }
-        return false;
+        
+        const isOpenNow = false; // Default to closed if manager not available
+        
+        return {
+            isOpen: isOpenNow,
+            withinWorkingHours: withinWorkingHours,
+            manualToggle: isOpen,
+            workingHoursInfo: workingHoursInfo,
+            reason: getStatusReason(isOpen, withinWorkingHours, isOpenNow)
+        };
     }
+    
+    // Helper function to get human-readable reason for status
+    function getStatusReason(isOpen, withinWorkingHours, finalStatus) {
+        if (finalStatus) {
+            return "Restaurant is open - within working hours and manual toggle is ON";
+        }
+        
+        if (isOpen === false) {
+            return "Restaurant is manually closed by owner";
+        }
+        
+        if (isOpen === true && !withinWorkingHours) {
+            return "Restaurant is outside working hours (manual toggle ignored)";
+        }
+        
+        if (isOpen === null && !withinWorkingHours) {
+            return "Restaurant is outside working hours";
+        }
+        
+        return "Restaurant is closed";
+    }
+    
+    // Function to update UI based on restaurant status
+    function updateRestaurantStatusUI(status) {
+        if (window.restaurantStatusManager) {
+            window.restaurantStatusManager.updateRestaurantStatusUI(status);
+        } else {
+            // Fallback UI update
+            const statusElement = document.getElementById('vendor_shop_status');
+            const addToCartButtons = document.querySelectorAll('.add-to-cart-btn');
+            
+            if (statusElement) {
+                if (status.isOpen) {
+                    statusElement.innerHTML = "{{ trans('lang.open') }}";
+                    statusElement.className = 'open';
+                } else {
+                    statusElement.innerHTML = "{{ trans('lang.closed') }}";
+                    statusElement.className = 'close';
+                }
+            }
+            
+            // Update add-to-cart buttons
+            addToCartButtons.forEach(button => {
+                if (status.isOpen) {
+                    button.disabled = false;
+                    button.classList.remove('opacity-50', 'cursor-not-allowed');
+                    button.innerHTML = '<span class="inline-flex items-center gap-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13l-1.35 2.7A2 2 0 008.48 19h7.04a2 2 0 001.83-1.3L17 13M7 13V6h13"/></svg> ADD</span>';
+                } else {
+                    button.disabled = true;
+                    button.classList.add('opacity-50', 'cursor-not-allowed');
+                    button.innerHTML = '<span class="text-xs font-semibold">Closed</span>';
+                }
+            });
+            
+            // Log status for debugging
+            console.log('Restaurant Status:', status);
+        }
+    }
+    
+    // Function to check restaurant status periodically (every 15 minutes - reduced frequency)
+    function startStatusMonitoring() {
+        if (window.restaurantStatusManager) {
+            window.restaurantStatusManager.startStatusMonitoring(15); // Increased from 5 to 15 minutes
+        } else {
+            // Fallback monitoring - reduced frequency to prevent server overload
+            checkAndUpdateStatus();
+            setInterval(checkAndUpdateStatus, 15 * 60 * 1000); // Changed from 5 to 15 minutes
+        }
+    }
+    
+    function checkAndUpdateStatus() {
+        if (restaurantWorkingHours && typeof restaurantIsOpen !== 'undefined') {
+            const status = getRestaurantStatus(restaurantWorkingHours, restaurantIsOpen);
+            updateRestaurantStatusUI(status);
+        }
+    }
+    
     let restaurantWorkingHours = [];
+    let restaurantIsOpen = null; // Will be set when vendor details are loaded
 </script>
 
 <!-- Google Fonts: Outfit -->

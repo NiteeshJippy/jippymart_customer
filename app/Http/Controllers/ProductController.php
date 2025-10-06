@@ -6,18 +6,34 @@ use Illuminate\Support\Facades\Auth;
 use Session;
 use Illuminate\Support\Facades\Storage;
 use Google\Client as Google_Client;
+use Kreait\Firebase\Factory;
+use App\Services\RestaurantService;
+use App\Services\DeliveryChargeService;
+
 class ProductController extends Controller
 {
+    protected $restaurantService;
+    protected $deliveryChargeService;
+
     /**
      * Create a new controller instance.
      *
      * @return void
      */
-    public function __construct()
+    public function __construct(RestaurantService $restaurantService, DeliveryChargeService $deliveryChargeService)
     {
-        if (!isset($_COOKIE['address_name'])) {
+        // Skip location check for deep link routes
+        $currentRoute = request()->route();
+        $isDeepLinkRoute = $currentRoute && in_array($currentRoute->getName(), [
+            'productDetail', 'product.deep', 'restaurant.deep', 'mart.deep', 'products.deep', 'categories.deep'
+        ]);
+
+        if (!$isDeepLinkRoute && !isset($_COOKIE['address_name'])) {
             \Redirect::to('set-location')->send();
         }
+
+        $this->restaurantService = $restaurantService;
+        $this->deliveryChargeService = $deliveryChargeService;
     }
     /**
      * Write code on Method
@@ -29,6 +45,7 @@ class ProductController extends Controller
         $cart = session()->get('cart', []);
         return view('products.detail', ['id' => $id, 'cart' => $cart]);
     }
+
     public function productList($type, $id)
     {
         return view('products.list', ['type' => $type, 'id' => $id]);
@@ -39,7 +56,191 @@ class ProductController extends Controller
     }
     public function productListAll()
     {
-        return view('products.list_arrivals');
+        // Check if Firebase credentials exist
+        $credentialsPath = storage_path('app/firebase/credentials.json');
+        $hasFirebaseCredentials = file_exists($credentialsPath);
+
+        // Provide fallback data when Firebase is not available
+        $fallbackProducts = [
+            [
+                'id' => '1',
+                'name' => 'Fresh Vegetables',
+                'description' => 'Fresh organic vegetables delivered to your doorstep',
+                'photo' => '/img/placeholder-vegetables.jpg',
+                'price' => 150,
+                'disPrice' => 120,
+                'rating' => 4.5,
+                'reviews' => 25,
+                'veg' => true
+            ],
+            [
+                'id' => '2',
+                'name' => 'Premium Rice',
+                'description' => 'High quality basmati rice',
+                'photo' => '/img/placeholder-rice.jpg',
+                'price' => 300,
+                'disPrice' => 250,
+                'rating' => 4.8,
+                'reviews' => 42,
+                'veg' => true
+            ],
+            [
+                'id' => '3',
+                'name' => 'Fresh Fruits',
+                'description' => 'Seasonal fresh fruits',
+                'photo' => '/img/placeholder-fruits.jpg',
+                'price' => 200,
+                'disPrice' => 180,
+                'rating' => 4.3,
+                'reviews' => 18,
+                'veg' => true
+            ],
+            [
+                'id' => '4',
+                'name' => 'Dairy Products',
+                'description' => 'Fresh milk and dairy items',
+                'photo' => '/img/placeholder-dairy.jpg',
+                'price' => 80,
+                'disPrice' => 70,
+                'rating' => 4.6,
+                'reviews' => 33,
+                'veg' => true
+            ],
+            [
+                'id' => '5',
+                'name' => 'Spices & Masala',
+                'description' => 'Authentic Indian spices',
+                'photo' => '/img/placeholder-spices.jpg',
+                'price' => 120,
+                'disPrice' => 100,
+                'rating' => 4.7,
+                'reviews' => 28,
+                'veg' => true
+            ],
+            [
+                'id' => '6',
+                'name' => 'Bakery Items',
+                'description' => 'Fresh bread and bakery products',
+                'photo' => '/img/placeholder-bakery.jpg',
+                'price' => 60,
+                'disPrice' => 50,
+                'rating' => 4.4,
+                'reviews' => 21,
+                'veg' => true
+            ]
+        ];
+
+        return view('products.list_arrivals', [
+            'hasFirebaseCredentials' => $hasFirebaseCredentials,
+            'fallbackProducts' => $fallbackProducts
+        ]);
+    }
+
+    /**
+     * Handle deep link requests for mobile app
+     * Shows app installation flow when accessed via HTTPS links
+     */
+    public function deepLinkHandler(Request $request)
+    {
+        // Get ID from URL
+        $id = $request->route('id');
+
+        // Determine the type of link based on the route
+        $routeName = $request->route()->getName();
+        $linkType = 'product'; // default
+
+        if (str_contains($routeName, 'restaurant')) {
+            $linkType = 'restaurant';
+        } elseif (str_contains($routeName, 'mart')) {
+            $linkType = 'mart';
+        }
+
+        // ✅ CHECK IF THIS IS A WEB ROUTE PATH, NOT A DEEPLINK ID
+        // If the ID looks like a web route path (e.g., "all-items", empty, or has query params),
+        // forward to the proper controller instead of treating it as a deeplink
+        if ($linkType === 'mart') {
+            // Check if this is the "all-items" web route
+            if ($id === 'all-items') {
+                \Log::info('Web Route Detected: all-items', [
+                    'id' => $id,
+                    'query_string' => $request->getQueryString()
+                ]);
+                
+                // Forward to MartController's allItems method
+                $martController = app(\App\Http\Controllers\MartController::class);
+                return $martController->allItems($request);
+            }
+            
+            // Check if this is other known web route paths
+            $webRoutePaths = ['items-by-category', 'cart'];
+            if (in_array($id, $webRoutePaths)) {
+                \Log::info('Web Route Detected in Deeplink Handler', [
+                    'id' => $id,
+                    'is_web_route' => true
+                ]);
+                
+                // For these routes, redirect to mart index as fallback
+                // The specific route handlers will be in the Route::prefix('mart') group
+                return redirect()->route('mart.index');
+            }
+        }
+
+        // Check for debug parameter to force show deep link handler (works in all environments)
+        $forceShow = $request->has('debug') || $request->has('mobile') || $request->has('app');
+
+        // Enhanced mobile detection
+        $userAgent = $request->header('User-Agent', '');
+        $isMobile = preg_match('/(android|iphone|ipad|mobile|tablet|blackberry|windows phone|opera mini|mobile safari)/i', $userAgent);
+
+        // Additional mobile detection methods
+        $isMobileApp = $request->hasHeader('X-Requested-With') &&
+                      str_contains($request->header('X-Requested-With'), 'com.jippymart.customer');
+
+        // Check if it's a deep link from the app
+        $isDeepLink = $request->hasHeader('Referer') &&
+                     str_contains($request->header('Referer'), 'jippymart.in');
+
+        // Check for specific mobile indicators
+        $hasMobileHeaders = $request->hasHeader('X-Mobile-App') ||
+                           $request->hasHeader('X-Android-App') ||
+                           $request->hasHeader('X-iOS-App');
+
+        // Log the detection for debugging
+        \Log::info('Deep Link Detection', [
+            'user_agent' => $userAgent,
+            'is_mobile' => $isMobile,
+            'is_mobile_app' => $isMobileApp,
+            'is_deep_link' => $isDeepLink,
+            'has_mobile_headers' => $hasMobileHeaders,
+            'force_show' => $forceShow,
+            'product_id' => $id
+        ]);
+
+        // Show deep link handler for mobile devices, mobile apps, or when forced
+        if ($forceShow || $isMobile || $isMobileApp || $isDeepLink || $hasMobileHeaders) {
+            return view('deep-link-handler', [
+                'productId' => $id,
+                'linkType' => $linkType,
+                'debug' => $forceShow,
+                'userAgent' => $userAgent,
+                'detectionInfo' => [
+                    'isMobile' => $isMobile,
+                    'isMobileApp' => $isMobileApp,
+                    'isDeepLink' => $isDeepLink,
+                    'hasMobileHeaders' => $hasMobileHeaders
+                ]
+            ]);
+        }
+
+        // For desktop browsers, redirect to appropriate web version
+        switch ($linkType) {
+            case 'restaurant':
+                return redirect('/restaurant');
+            case 'mart':
+                return redirect('/mart');
+            default:
+                return redirect('/products');
+        }
     }
     /**
      * Write code on Method
@@ -52,7 +253,7 @@ class ProductController extends Controller
         $id = $req['id'];
         $restaurant_id = $req['restaurant_id'];
         $cart = Session::get('cart', []);
-        
+
         // Initialize cart structure if it doesn't exist
         if (!isset($cart['item'])) {
             $cart['item'] = array();
@@ -67,44 +268,64 @@ class ProductController extends Controller
         $cart['restaurant_latitude'] = $req['restaurant_latitude'];
         $cart['restaurant_longitude'] = $req['restaurant_longitude'];
         $cart['distanceType'] = $req['distanceType'];
-        $cart['isSelfDelivery'] = $req['isSelfDelivery'];  
-        $deliveryChargemain = @$_COOKIE['deliveryChargemain'];
+        $cart['isSelfDelivery'] = $req['isSelfDelivery'];
         $address_lat = @$_COOKIE['address_lat'];
         $address_lng = @$_COOKIE['address_lng'];
         $restaurant_latitude = @$_COOKIE['restaurant_latitude'];
         $restaurant_longitude = @$_COOKIE['restaurant_longitude'];
         $selfDelivery= $req['isSelfDelivery'];
-        
-        if (@$deliveryChargemain && @$address_lat && @$address_lng && @$restaurant_latitude && @$restaurant_longitude) {
-            $deliveryChargemain = json_decode($deliveryChargemain);
-            if (!empty($deliveryChargemain)) {
-                if (! empty($req['distanceType'])) {
-                    $distanceType = $req['distanceType'];
-                }else{
-                    $distanceType = 'km';
+
+        if (@$address_lat && @$address_lng && @$restaurant_latitude && @$restaurant_longitude) {
+            if (! empty($req['distanceType'])) {
+                $distanceType = $req['distanceType'];
+            }else{
+                $distanceType = 'km';
+            }
+
+            $kmradius = $this->distance($address_lat, $address_lng, $restaurant_latitude, $restaurant_longitude, $distanceType);
+
+            // Store distance for new delivery charge system
+            $cart['deliverykm'] = $kmradius;
+
+            // Apply new delivery charge system if enabled
+            if ($this->deliveryChargeService->shouldUseNewDeliverySystem()) {
+                // Calculate item total for new delivery charge system
+                $itemTotal = 0;
+                if (isset($cart['item'][$restaurant_id])) {
+                    foreach ($cart['item'][$restaurant_id] as $item) {
+                        $basePrice = floatval($item['item_price'] ?? 0);
+                        $extraPrice = floatval($item['extra_price'] ?? 0);
+                        $quantity = floatval($item['quantity'] ?? 1);
+                        $itemTotal += ($basePrice + $extraPrice) * $quantity;
+                    }
                 }
-                $delivery_charges_per_km = $deliveryChargemain->delivery_charges_per_km;
-                $minimum_delivery_charges = $deliveryChargemain->minimum_delivery_charges;
-                $minimum_delivery_charges_within_km = $deliveryChargemain->minimum_delivery_charges_within_km;
-                $kmradius = $this->distance($address_lat, $address_lng, $restaurant_latitude, $restaurant_longitude, $distanceType);
-                
-                if ($minimum_delivery_charges_within_km > $kmradius) {
-                    $cart['deliverychargemain'] = $minimum_delivery_charges;
-                } else {
-                    $cart['deliverychargemain'] = round(($kmradius * $delivery_charges_per_km), 2);
-                }
-                $cart['deliverykm'] = $kmradius;
-                
+
+                // Add current item to total
+                $currentItemPrice = floatval($req['item_price'] ?? 0);
+                $currentItemExtra = floatval($req['extra_price'] ?? 0);
+                $currentItemQty = floatval($req['quantity'] ?? 1);
+                $itemTotal += ($currentItemPrice + $currentItemExtra) * $currentItemQty;
+
+                // Calculate new delivery charge
+                $calculation = $this->deliveryChargeService->calculateDeliveryCharge($itemTotal, $kmradius);
+                $cart['deliverycharge'] = $calculation['actual_fee'];
+                $cart['deliverychargemain'] = $calculation['original_fee'];
+                $cart['delivery_charge_calculation'] = $calculation;
             }
         }
-       
+
         if (Session::get('takeawayOption') == "true") {
             $req['delivery_option'] = "takeaway";
         } else {
             $req['delivery_option'] = "delivery";
         }
         if (@$req['delivery_option'] == "delivery") {
-            $cart['deliverycharge'] = @$cart['deliverychargemain'];
+            // Use new system's actual fee if available, otherwise fall back to old system
+            if (isset($cart['delivery_charge_calculation'])) {
+                $cart['deliverycharge'] = $cart['delivery_charge_calculation']['actual_fee'];
+            } else {
+                $cart['deliverycharge'] = @$cart['deliverychargemain'];
+            }
         } else {
             $cart['deliverycharge'] = 0;
             $cart['tip_amount'] = 0;
@@ -192,22 +413,23 @@ class ProductController extends Controller
         $cart['specialOfferDiscount'] = $specialOfferDiscount;
         $cart['specialOfferDiscountVal'] = $specialOfferDiscountVal;
         $cart['specialOfferType'] = $specialOfferType;
-        $totalTaxAmount = 0;
-        if (is_array($cart['taxValue'])) {
-            foreach ($cart['taxValue'] as $val) {
-                if ($val['type'] == 'percentage') {
-                    $tax = ($val['tax'] * $total_item_price) / 100;
-                } else {
-                    $tax = $val['tax'];
-                }
-                $totalTaxAmount += floatval($tax);
-            }
-            $tax = $totalTaxAmount;
-            $tax_label = '';
+
+        // Calculate delivery charge for tax calculation
+        $delivery_charge_for_tax = 0;
+        if (isset($cart['deliverycharge'])) {
+            $delivery_charge_for_tax = $cart['deliverycharge'];
+        } elseif (isset($cart['deliverychargemain'])) {
+            $delivery_charge_for_tax = $cart['deliverychargemain'];
         }
-        $cart['tax_label'] = $tax_label;
-        $cart['tax'] = $tax;
-        $cart['decimal_degits'] = $req['decimal_degits'];
+
+        // Calculate new tax (SGST + GST)
+        $taxCalculation = $this->calculateNewTax($cart, $total_item_price, $delivery_charge_for_tax);
+
+        $cart['tax'] = $taxCalculation['total_tax'];
+        $cart['sgst'] = $taxCalculation['sgst'];
+        $cart['gst'] = $taxCalculation['gst'];
+        $cart['tax_label'] = 'SGST + GST';
+        $cart['decimal_degits'] = $req['decimal_degits'] ?? 2;
         $discounted_subtotal = $total_item_price - $discount_amount - $specialOfferDiscount;
         $five_percent_charge = round($discounted_subtotal * 0.05, 2);
         $cart['eighteen_percent_charge'] = $five_percent_charge;
@@ -233,6 +455,9 @@ class ProductController extends Controller
         echo json_encode($res);
         exit;
     }
+    /**
+     * Calculate distance between two points using Haversine formula
+     */
     public function distance($lat1, $lon1, $lat2, $lon2, $unit)
     {
         $theta = $lon1 - $lon2;
@@ -240,13 +465,13 @@ class ProductController extends Controller
         $dist = acos($dist);
         $dist = rad2deg($dist);
         $miles = $dist * 60 * 1.1515;
-       
-        if ($unit == "km") {
-            return ($miles * 1.609344);
+        if ($unit == 'km') {
+            return $miles * 1.609344;
         } else {
             return $miles;
         }
     }
+
     /**
      * Write code on Method
      *
@@ -636,21 +861,28 @@ class ProductController extends Controller
                 }
             }
             $total_item_price = $total_item_price - $discount_amount - $specialOfferDiscount;
-            $totalTaxAmount = 0;
-            if (is_array($cart['taxValue'])) {
-                foreach ($cart['taxValue'] as $val) {
-                    if ($val['type'] == 'percentage') {
-                        $tax = ($val['tax'] * $total_item_price) / 100;
-                    } else {
-                        $tax = $val['tax'];
-                    }
-                    $totalTaxAmount += floatval($tax);
-                }
-                $tax = $totalTaxAmount;
-                $tax_label = '';
+
+            // Calculate delivery charge for tax calculation
+            $delivery_charge_for_tax = 0;
+            if (isset($cart['deliverycharge'])) {
+                $delivery_charge_for_tax = $cart['deliverycharge'];
+            } elseif (isset($cart['deliverychargemain'])) {
+                $delivery_charge_for_tax = $cart['deliverychargemain'];
             }
-            $cart['tax_label'] = $tax_label;
-            $cart['tax'] = $tax;
+
+            // Calculate new tax (SGST + GST)
+            $taxCalculation = $this->calculateNewTax($cart, $total_item_price, $delivery_charge_for_tax);
+
+            $cart['tax'] = $taxCalculation['total_tax'];
+            $cart['sgst'] = $taxCalculation['sgst'];
+            $cart['gst'] = $taxCalculation['gst'];
+            $cart['tax_label'] = 'SGST + GST';
+
+            // Ensure decimal_degits is set to 2 for proper display
+            if (!isset($cart['decimal_degits']) || $cart['decimal_degits'] == 0) {
+                $cart['decimal_degits'] = 2;
+            }
+
             Session::put('cart', $cart);
             Session::save();
             // Auto-apply SAVE30 coupon if item value >= 299, remove if below
@@ -878,12 +1110,12 @@ class ProductController extends Controller
         $cart = array();
         Session::put('cart', $cart);
         Session::save();
-        
+
         $res = array('status' => true, 'html' => view('restaurant.cart_item', ['cart' => $cart])->render());
         echo json_encode($res);
         exit;
     }
-    
+
     /**
      * Sync cart from frontend modal (AJAX)
      */
@@ -909,7 +1141,10 @@ class ProductController extends Controller
         $cart['specialOfferType'] = '';
         $cart['tax_label'] = '';
         $cart['tax'] = 0;
-        $cart['decimal_degits'] = 0;
+
+        // Get currency data from request or set default
+        $cart['decimal_degits'] = $data['decimal_degits'] ?? 2;
+
         session(['cart' => $cart]);
         session()->save();
         \Log::debug('syncCart session cart', session('cart'));
@@ -926,5 +1161,58 @@ class ProductController extends Controller
         Session::save();
         $res = array('status' => true, 'html' => view('restaurant.cart_item', ['cart' => $cart])->render());
         return response()->json($res);
+    }
+
+    /**
+     * Get restaurant information for a product
+     */
+    public function getRestaurantInfo($productId, Request $request)
+    {
+        $vendorId = $request->query('vendor_id');
+        return response()->json($this->restaurantService->getRestaurantInfo($productId, $vendorId));
+    }
+
+    /**
+     * Calculate tax according to new rules:
+     * SGST (5%) on Item Total (before discounts)
+     * GST (18%) on Delivery Charges (base ₹23 + extra distance charges)
+     */
+    private function calculateNewTax($cart, $total_item_price, $delivery_charge)
+    {
+        $sgst = 0;
+        $gst = 0;
+        $total_tax = 0;
+
+        // Calculate SGST (5%) on Item Total (before any discounts)
+        $item_total_before_discount = 0;
+        if (isset($cart['item']) && is_array($cart['item'])) {
+            foreach ($cart['item'] as $restaurantItems) {
+                if (is_array($restaurantItems)) {
+                    foreach ($restaurantItems as $item) {
+                        $basePrice = floatval($item['item_price'] ?? 0);
+                        $extraPrice = floatval($item['extra_price'] ?? 0);
+                        $quantity = floatval($item['quantity'] ?? 1);
+                        $item_total_before_discount += ($basePrice + $extraPrice) * $quantity;
+                    }
+                }
+            }
+        }
+
+        // SGST = 5% of item total (before discounts)
+        $sgst = ($item_total_before_discount * 5) / 100;
+
+        // GST = 18% of delivery charge
+        $gst = ($delivery_charge * 18) / 100;
+
+        // Total tax = SGST + GST
+        $total_tax = $sgst + $gst;
+
+        return [
+            'sgst' => $sgst,
+            'gst' => $gst,
+            'total_tax' => $total_tax,
+            'item_total_before_discount' => $item_total_before_discount,
+            'delivery_charge' => $delivery_charge
+        ];
     }
 }
