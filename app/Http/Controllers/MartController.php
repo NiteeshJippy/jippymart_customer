@@ -9,7 +9,6 @@ class MartController extends Controller
 {
     public function index()
     {
-        // Set strict limits for shared hosting
         ini_set('memory_limit', '128M');
         set_time_limit(30); // 30 seconds max
 
@@ -544,7 +543,7 @@ class MartController extends Controller
                         $nameMatch = stripos($data['name'] ?? '', $search) !== false;
                         $descMatch = stripos($data['description'] ?? '', $search) !== false;
                         $brandMatch = stripos($data['brandTitle'] ?? '', $search) !== false;
-                        
+
                         if (!$nameMatch && !$descMatch && !$brandMatch) {
                             continue;
                         }
@@ -645,7 +644,7 @@ class MartController extends Controller
 
             // Sort brands alphabetically
             ksort($allBrands);
-            
+
             \Log::info("All items loaded: " . count($items) . " items with filters applied");
 
             return view('mart.all-items', [
